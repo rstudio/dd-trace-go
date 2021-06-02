@@ -54,8 +54,11 @@ func (tx *Tx) Rollback(ctx context.Context) error {
 }
 
 func (tx *Tx) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
-	// TODO: implement tx.CopyFrom
-	return 0, nil
+	if tx.closed {
+		return 0, pgx.ErrTxClosed
+	}
+
+	return tx.conn.CopyFrom(ctx, tableName, columnNames, rowSrc)
 }
 
 func (tx *Tx) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults {

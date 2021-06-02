@@ -3,6 +3,7 @@ package pgxtrace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -30,28 +31,34 @@ const (
 	opName = "pgx.query"
 )
 
-func Connect(ctx context.Context, connString string) (*Conn, error) {
+func Connect(ctx context.Context, connString string, opts ...Option) (*Conn, error) {
 	pgxConnn, err := pgx.Connect(ctx, connString)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Conn{Conn: pgxConnn}, nil
+	cfg := &config{}
+	resolveOptions(cfg, opts...)
+
+	return &Conn{Conn: pgxConnn, cfg: cfg}, nil
 }
 
-func ConnectConfig(ctx context.Context, connConfig *pgx.ConnConfig) (*Conn, error) {
+func ConnectConfig(ctx context.Context, connConfig *pgx.ConnConfig, opts ...Option) (*Conn, error) {
 	pgxConnn, err := pgx.ConnectConfig(ctx, connConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Conn{Conn: pgxConnn}, nil
+	cfg := &config{}
+	resolveOptions(cfg, opts...)
+
+	return &Conn{Conn: pgxConnn, cfg: cfg}, nil
 }
 
 type Conn struct {
 	*pgx.Conn
 
-	cfg *traceConfig
+	cfg *config
 }
 
 func (conn *Conn) Begin(ctx context.Context) (pgx.Tx, error) {
@@ -108,13 +115,14 @@ func (conn *Conn) Exec(ctx context.Context, sql string, arguments ...interface{}
 	return commandTag, err
 }
 
-type traceConfig struct {
-	serviceName   string
-	analyticsRate float64
-	meta          map[string]string
+func (conn *Conn) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
+	start := time.Now()
+	n, err := conn.Conn.CopyFrom(ctx, tableName, columnNames, rowSrc)
+	tryTrace(conn.cfg, ctx, queryTypeCopyFrom, fmt.Sprintf("COPY %s FROM stdin", tableName.Sanitize()), start, err)
+	return n, err
 }
 
-func tryTrace(cfg *traceConfig, ctx context.Context, qtype queryType, query string, startTime time.Time, err error) {
+func tryTrace(cfg *config, ctx context.Context, qtype queryType, query string, startTime time.Time, err error) {
 	opts := []ddtrace.StartSpanOption{
 		// TODO: service name from config/options
 		// tracer.ServiceName(cfg.serviceName),

@@ -123,3 +123,60 @@ func TestConnExec(t *testing.T) {
 	assert.Equal(t, "pgx.query", span0.OperationName())
 	assert.Equal(t, span0.Tags()["sql.query_type"], queryTypeExec)
 }
+
+func TestConnClose(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tr := mocktracer.Start()
+	defer tr.Stop()
+
+	conn, err := Connect(ctx, testDB)
+	assert.Nil(t, err)
+	assert.NotNil(t, conn)
+
+	assert.False(t, conn.IsClosed())
+	err = conn.Close(ctx)
+	assert.Nil(t, err)
+
+	assert.True(t, conn.IsClosed())
+}
+
+func TestConnCopyFrom(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tr := mocktracer.Start()
+	defer tr.Stop()
+
+	conn, err := Connect(ctx, testDB)
+	assert.Nil(t, err)
+	assert.NotNil(t, conn)
+
+	_, err = conn.Exec(ctx, "DROP TABLE IF EXISTS altered_futures")
+	assert.Nil(t, err)
+
+	_, err = conn.Exec(ctx, "CREATE TABLE altered_futures (location text, heinous bool)")
+	assert.Nil(t, err)
+
+	sliceRows := [][]interface{}{
+		[]interface{}{"by a tree", true},
+		[]interface{}{"inside me", false},
+	}
+
+	n, err := conn.CopyFrom(
+		ctx,
+		pgx.Identifier{"altered_futures"},
+		[]string{"location", "heinous"},
+		pgx.CopyFromSlice(len(sliceRows), func(i int) ([]interface{}, error) {
+			return sliceRows[i], nil
+		}),
+	)
+	assert.Nil(t, err)
+	assert.Equal(t, int64(2), n)
+
+	assert.Len(t, tr.FinishedSpans(), 3)
+	span2 := tr.FinishedSpans()[2]
+	assert.Equal(t, "pgx.query", span2.OperationName())
+	assert.Equal(t, span2.Tags()["sql.query_type"], queryTypeCopyFrom)
+}
