@@ -15,14 +15,14 @@ type queryType string
 
 const (
 	queryTypeQuery      queryType = "Query"
-	queryTypePing                 = "Ping"
-	queryTypePrepare              = "Prepare"
-	queryTypeExec                 = "Exec"
 	queryTypeBegin                = "Begin"
 	queryTypeClose                = "Close"
 	queryTypeCommit               = "Commit"
 	queryTypeCopyFrom             = "CopyFrom"
 	queryTypeDeallocate           = "Deallocate"
+	queryTypeExec                 = "Exec"
+	queryTypePing                 = "Ping"
+	queryTypePrepare              = "Prepare"
 	queryTypeSendBatch            = "SendBatch"
 
 	opName = "pgx.query"
@@ -57,6 +57,29 @@ type Conn struct {
 
 	cfg *config
 }
+
+// TODO: all methods on *pgx.Conn, where 'x' means it has been
+// implemented and '-' means no override is needed:
+// - [x] Begin
+// - [x] BeginTx
+// - [x] BeginFunc
+// - [x] BeginTxFunc
+// - [-] Close
+// - [-] Config
+// - [-] ConnInfo
+// - [x] CopyFrom
+// - [-] Deallocate
+// - [x] Exec
+// - [-] IsClosed
+// - [-] PgConn
+// - [x] Ping
+// - [-] Prepare
+// - [x] Query
+// - [x] QueryFunc
+// - [ ] QueryRow
+// - [ ] SendBatch
+// - [-] StatementCache
+// - [-] WaitForNotification
 
 func (conn *Conn) Begin(ctx context.Context) (pgx.Tx, error) {
 	return conn.BeginTx(ctx, pgx.TxOptions{})
@@ -97,6 +120,13 @@ func (conn *Conn) BeginTxFunc(ctx context.Context, txOptions pgx.TxOptions, f fu
 	return tx.Commit(ctx)
 }
 
+func (conn *Conn) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
+	start := time.Now()
+	n, err := conn.Conn.CopyFrom(ctx, tableName, columnNames, rowSrc)
+	traceQuery(conn.cfg, ctx, queryTypeCopyFrom, fmt.Sprintf("COPY %s FROM stdin", tableName.Sanitize()), start, err)
+	return n, err
+}
+
 func (conn *Conn) Exec(ctx context.Context, sql string, arguments ...interface{}) (pgconn.CommandTag, error) {
 	start := time.Now()
 	commandTag, err := conn.Conn.Exec(ctx, sql, arguments...)
@@ -106,15 +136,51 @@ func (conn *Conn) Exec(ctx context.Context, sql string, arguments ...interface{}
 		qtype = queryTypeBegin
 	} else if sql == "commit" {
 		qtype = queryTypeCommit
+	} else if sql == ";" {
+		qtype = queryTypePing
 	}
 	traceQuery(conn.cfg, ctx, qtype, sql, start, err)
 
 	return commandTag, err
 }
 
-func (conn *Conn) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
+func (conn *Conn) Ping(ctx context.Context) error {
+	_, err := conn.Exec(ctx, ";")
+	return err
+}
+
+func (conn *Conn) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
 	start := time.Now()
-	n, err := conn.Conn.CopyFrom(ctx, tableName, columnNames, rowSrc)
-	traceQuery(conn.cfg, ctx, queryTypeCopyFrom, fmt.Sprintf("COPY %s FROM stdin", tableName.Sanitize()), start, err)
-	return n, err
+	rows, err := conn.Conn.Query(ctx, sql, args...)
+	traceQuery(conn.cfg, ctx, queryTypeQuery, sql, start, err)
+	return rows, err
+}
+
+// QueryFunc is a full copy of pgx.Conn.QueryFunc given that it is
+// calling Query and struct embedding doesn't work like that.
+// TODO: remove this if/when possible
+func (conn *Conn) QueryFunc(ctx context.Context, sql string, args []interface{}, scans []interface{}, f func(pgx.QueryFuncRow) error) (pgconn.CommandTag, error) {
+	rows, err := conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		err = rows.Scan(scans...)
+		if err != nil {
+			return nil, err
+		}
+
+		err = f(rows)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return rows.CommandTag(), nil
 }
