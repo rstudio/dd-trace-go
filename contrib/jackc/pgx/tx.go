@@ -11,16 +11,11 @@ import (
 )
 
 // Tx is a complete implementation of the pgx.Tx interface
+//
+// TODO: remove this if/when *pgxtrace.Conn can be set on pgx.Tx
 type Tx struct {
-	conn *Conn
-	cfg  *traceConfig
-}
-
-func newTx(conn *Conn, cfg *traceConfig) *Tx {
-	return &Tx{
-		conn: conn,
-		cfg:  cfg,
-	}
+	conn   *Conn
+	closed bool
 }
 
 func (tx *Tx) Begin(ctx context.Context) (pgx.Tx, error) {
@@ -34,7 +29,22 @@ func (tx *Tx) BeginFunc(ctx context.Context, f func(pgx.Tx) error) error {
 }
 
 func (tx *Tx) Commit(ctx context.Context) error {
-	// TODO: implement tx.Commit
+	if tx.closed {
+		return pgx.ErrTxClosed
+	}
+
+	commandTag, err := tx.conn.Exec(ctx, "commit")
+	tx.closed = true
+	if err != nil {
+		if tx.conn.PgConn().TxStatus() != 'I' {
+			_ = tx.conn.Close(ctx)
+		}
+		return err
+	}
+	if string(commandTag) == "ROLLBACK" {
+		return pgx.ErrTxCommitRollback
+	}
+
 	return nil
 }
 

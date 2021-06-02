@@ -2,6 +2,7 @@ package pgxtrace
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ const (
 	queryTypeExec                 = "Exec"
 	queryTypeBegin                = "Begin"
 	queryTypeClose                = "Close"
+	queryTypeCommit               = "Commit"
 	queryTypeCopyFrom             = "CopyFrom"
 	queryTypeDeallocate           = "Deallocate"
 	queryTypeSendBatch            = "SendBatch"
@@ -62,7 +64,33 @@ func (conn *Conn) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx,
 		return nil, err
 	}
 
-	return newTx(conn, conn.cfg), nil
+	return &Tx{conn: conn}, nil
+}
+
+func (conn *Conn) BeginFunc(ctx context.Context, f func(pgx.Tx) error) error {
+	return conn.BeginTxFunc(ctx, pgx.TxOptions{}, f)
+}
+
+func (conn *Conn) BeginTxFunc(ctx context.Context, txOptions pgx.TxOptions, f func(pgx.Tx) error) (err error) {
+	var tx pgx.Tx
+	tx, err = conn.BeginTx(ctx, txOptions)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		rollbackErr := tx.Rollback(ctx)
+		if !(rollbackErr == nil || errors.Is(rollbackErr, pgx.ErrTxClosed)) {
+			err = rollbackErr
+		}
+	}()
+
+	fErr := f(tx)
+	if fErr != nil {
+		_ = tx.Rollback(ctx)
+		return fErr
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (conn *Conn) Exec(ctx context.Context, sql string, arguments ...interface{}) (pgconn.CommandTag, error) {
@@ -72,6 +100,8 @@ func (conn *Conn) Exec(ctx context.Context, sql string, arguments ...interface{}
 	var qtype queryType = queryTypeExec
 	if strings.HasPrefix(sql, "begin") {
 		qtype = queryTypeBegin
+	} else if sql == "commit" {
+		qtype = queryTypeCommit
 	}
 	tryTrace(conn.cfg, ctx, qtype, sql, start, err)
 

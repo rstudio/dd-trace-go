@@ -66,6 +66,43 @@ func TestConnBegin(t *testing.T) {
 	assert.Equal(t, span1.Tags()["sql.query_type"], queryTypeExec)
 }
 
+func TestConnBeginFunc(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tr := mocktracer.Start()
+	defer tr.Stop()
+
+	conn, err := Connect(ctx, testDB)
+	assert.Nil(t, err)
+	assert.NotNil(t, conn)
+
+	err = conn.BeginFunc(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT NOW()"); err != nil {
+			return err
+		}
+
+		if _, err := tx.Exec(ctx, "SELECT $1::text AS ok", "ok"); err != nil {
+			return err
+		}
+
+		return nil
+	})
+	assert.Nil(t, err)
+
+	assert.Len(t, tr.FinishedSpans(), 4)
+
+	expectedQueryTypes := []string{
+		string(queryTypeBegin),
+		string(queryTypeExec),
+		string(queryTypeExec),
+		string(queryTypeCommit),
+	}
+	for i, span := range tr.FinishedSpans() {
+		assert.Equal(t, expectedQueryTypes[i], span.Tags()["sql.query_type"])
+	}
+}
+
 func TestConnExec(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
