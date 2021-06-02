@@ -2,6 +2,7 @@ package pgxtrace
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgconn"
@@ -47,26 +48,53 @@ func ConnectConfig(ctx context.Context, connConfig *pgx.ConnConfig) (*Conn, erro
 
 type Conn struct {
 	*pgx.Conn
+
+	cfg *traceConfig
+}
+
+func (conn *Conn) Begin(ctx context.Context) (pgx.Tx, error) {
+	return conn.BeginTx(ctx, pgx.TxOptions{})
+}
+
+func (conn *Conn) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error) {
+	_, err := conn.Exec(ctx, txOptionsBeginSQL(txOptions))
+	if err != nil {
+		return nil, err
+	}
+
+	return newTx(conn, conn.cfg), nil
 }
 
 func (conn *Conn) Exec(ctx context.Context, sql string, arguments ...interface{}) (pgconn.CommandTag, error) {
 	start := time.Now()
 	commandTag, err := conn.Conn.Exec(ctx, sql, arguments...)
-	conn.tryTrace(ctx, queryTypeExec, sql, start, err)
+
+	var qtype queryType = queryTypeExec
+	if strings.HasPrefix(sql, "begin") {
+		qtype = queryTypeBegin
+	}
+	tryTrace(conn.cfg, ctx, qtype, sql, start, err)
+
 	return commandTag, err
 }
 
-func (conn *Conn) tryTrace(ctx context.Context, qtype queryType, query string, startTime time.Time, err error) {
+type traceConfig struct {
+	serviceName   string
+	analyticsRate float64
+	meta          map[string]string
+}
+
+func tryTrace(cfg *traceConfig, ctx context.Context, qtype queryType, query string, startTime time.Time, err error) {
 	opts := []ddtrace.StartSpanOption{
 		// TODO: service name from config/options
-		// tracer.ServiceName(conn.cfg.serviceName),
+		// tracer.ServiceName(cfg.serviceName),
 		tracer.SpanType(ext.SpanTypeSQL),
 		tracer.StartTime(startTime),
 	}
 
 	// TODO: analytics rate from config/options
-	// if !math.IsNaN(conn.cfg.analyticsRate) {
-	// opts = append(opts, tracer.Tag(ext.EventSampleRate, conn.cfg.analyticsRate))
+	// if !math.IsNaN(cfg.analyticsRate) {
+	// opts = append(opts, tracer.Tag(ext.EventSampleRate, cfg.analyticsRate))
 	// }
 
 	span, _ := tracer.StartSpanFromContext(ctx, opName, opts...)
@@ -77,7 +105,7 @@ func (conn *Conn) tryTrace(ctx context.Context, qtype queryType, query string, s
 	span.SetTag("sql.query_type", string(qtype))
 	span.SetTag(ext.ResourceName, resource)
 	// TODO: meta tags from config/options
-	// for k, v := range conn.meta {
+	// for k, v := range cfg.meta {
 	// span.SetTag(k, v)
 	// }
 	// TODO: meta tags from context map

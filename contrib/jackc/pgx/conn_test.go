@@ -56,13 +56,14 @@ func TestConnBegin(t *testing.T) {
 	assert.NotNil(t, commandTag)
 
 	assert.Len(t, tr.FinishedSpans(), 2)
+
 	span0 := tr.FinishedSpans()[0]
 	assert.Equal(t, "pgx.query", span0.OperationName())
 	assert.Equal(t, span0.Tags()["sql.query_type"], queryTypeBegin)
 
 	span1 := tr.FinishedSpans()[1]
 	assert.Equal(t, "pgx.query", span1.OperationName())
-	assert.Equal(t, span0.Tags()["sql.query_type"], queryTypeExec)
+	assert.Equal(t, span1.Tags()["sql.query_type"], queryTypeExec)
 }
 
 func TestConnExec(t *testing.T) {
