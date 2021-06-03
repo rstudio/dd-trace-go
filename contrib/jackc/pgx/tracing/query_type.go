@@ -3,8 +3,7 @@ package tracing
 type QueryType string
 
 const (
-	QueryTypeQuery      QueryType = "Query"
-	QueryTypeBegin                = "Begin"
+	QueryTypeBegin      QueryType = "Begin"
 	QueryTypeClose                = "Close"
 	QueryTypeCommit               = "Commit"
 	QueryTypeCopyFrom             = "CopyFrom"
@@ -12,5 +11,7 @@ const (
 	QueryTypeExec                 = "Exec"
 	QueryTypePing                 = "Ping"
 	QueryTypePrepare              = "Prepare"
+	QueryTypeQuery                = "Query"
+	QueryTypeRollback             = "Rollback"
 	QueryTypeSendBatch            = "SendBatch"
 )

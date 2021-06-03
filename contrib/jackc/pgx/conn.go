@@ -2,7 +2,6 @@ package pgxtrace
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -71,25 +70,35 @@ func (conn *Conn) BeginFunc(ctx context.Context, f func(pgx.Tx) error) error {
 }
 
 func (conn *Conn) BeginTxFunc(ctx context.Context, txOptions pgx.TxOptions, f func(pgx.Tx) error) (err error) {
-	var tx pgx.Tx
-	tx, err = conn.BeginTx(ctx, txOptions)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		rollbackErr := tx.Rollback(ctx)
-		if !(rollbackErr == nil || errors.Is(rollbackErr, pgx.ErrTxClosed)) {
-			err = rollbackErr
+	start := time.Now()
+
+	return conn.Conn.BeginTxFunc(ctx, txOptions, func(tx pgx.Tx) error {
+		tracing.TraceQuery(ctx, tracing.TraceQueryParams{
+			ServiceName:   conn.cfg.ServiceName,
+			AnalyticsRate: conn.cfg.AnalyticsRate,
+			Meta:          conn.cfg.Meta,
+			QueryType:     tracing.QueryTypeBegin,
+			StartTime:     start,
+		})
+
+		err := f(&Tx{Tx: tx, conn: conn, cfg: conn.cfg})
+
+		var qtype tracing.QueryType = tracing.QueryTypeCommit
+		if err != nil {
+			qtype = tracing.QueryTypeRollback
 		}
-	}()
 
-	fErr := f(tx)
-	if fErr != nil {
-		_ = tx.Rollback(ctx)
-		return fErr
-	}
+		defer tracing.TraceQuery(ctx, tracing.TraceQueryParams{
+			ServiceName:   conn.cfg.ServiceName,
+			AnalyticsRate: conn.cfg.AnalyticsRate,
+			Meta:          conn.cfg.Meta,
+			QueryType:     qtype,
+			StartTime:     time.Now(),
+			Err:           err,
+		})
 
-	return tx.Commit(ctx)
+		return err
+	})
 }
 
 func (conn *Conn) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {

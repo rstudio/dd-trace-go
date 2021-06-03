@@ -61,11 +61,11 @@ func TestPoolBegin(t *testing.T) {
 
 	span0 := tr.FinishedSpans()[0]
 	assert.Equal(t, "pgx.query", span0.OperationName())
-	assert.Equal(t, span0.Tags()["sql.query_type"], tracing.QueryTypeBegin)
+	assert.Equal(t, string(tracing.QueryTypeBegin), span0.Tags()["sql.query_type"])
 
 	span1 := tr.FinishedSpans()[1]
 	assert.Equal(t, "pgx.query", span1.OperationName())
-	assert.Equal(t, span1.Tags()["sql.query_type"], tracing.QueryTypeExec)
+	assert.Equal(t, string(tracing.QueryTypeExec), span1.Tags()["sql.query_type"])
 }
 
 func TestPoolBeginFunc(t *testing.T) {
@@ -93,11 +93,10 @@ func TestPoolBeginFunc(t *testing.T) {
 	assert.Nil(t, err)
 
 	expectedQueryTypes := []string{
-		// TODO: figure out if wrapping begin/commit is worth it?
-		// string(tracing.QueryTypeBegin),
+		string(tracing.QueryTypeBegin),
 		string(tracing.QueryTypeExec),
 		string(tracing.QueryTypeExec),
-		// string(tracing.QueryTypeCommit),
+		string(tracing.QueryTypeCommit),
 	}
 
 	assert.Len(t, tr.FinishedSpans(), len(expectedQueryTypes))
@@ -107,29 +106,29 @@ func TestPoolBeginFunc(t *testing.T) {
 	}
 }
 
-/***
- * TODO
-func TestConnExec(t *testing.T) {
+func TestPoolExec(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	tr := mocktracer.Start()
 	defer tr.Stop()
 
-	conn, err := Connect(ctx, testDB)
+	pool, err := Connect(ctx, testDB)
 	assert.Nil(t, err)
-	assert.NotNil(t, conn)
+	assert.NotNil(t, pool)
 
-	commandTag, err := conn.Exec(ctx, "SELECT NOW(), $1::text AS ok", "ok")
+	commandTag, err := pool.Exec(ctx, "SELECT NOW(), $1::text AS ok", "ok")
 	assert.Nil(t, err)
 	assert.NotNil(t, commandTag)
 
 	assert.Len(t, tr.FinishedSpans(), 1)
 	span0 := tr.FinishedSpans()[0]
 	assert.Equal(t, "pgx.query", span0.OperationName())
-	assert.Equal(t, span0.Tags()["sql.query_type"], tracing.QueryTypeExec)
+	assert.Equal(t, tracing.QueryTypeExec, span0.Tags()["sql.query_type"])
 }
 
+/***
+ * TODO
 func TestConnClose(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

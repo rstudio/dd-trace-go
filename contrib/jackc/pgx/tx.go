@@ -15,10 +15,12 @@ import (
 	"gopkg.in/DataDog/dd-trace-go.v1/internal/log"
 )
 
-// Tx is a complete implementation of the pgx.Tx interface
+// Tx is a (mostly?) complete implementation of the pgx.Tx interface
 //
 // TODO: remove this if/when *pgxtrace.Conn can be set on pgx.Tx
 type Tx struct {
+	pgx.Tx
+
 	conn         *Conn
 	err          error
 	cfg          *tracing.Config

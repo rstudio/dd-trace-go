@@ -3,6 +3,7 @@ package pgxpooltrace
 import (
 	"context"
 
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 
@@ -80,4 +81,14 @@ func (pool *Pool) Acquire(ctx context.Context) (*Conn, error) {
 	}
 
 	return &Conn{Conn: pgxPoolConn, cfg: pool.cfg}, nil
+}
+
+func (pool *Pool) Exec(ctx context.Context, sql string, arguments ...interface{}) (pgconn.CommandTag, error) {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Release()
+
+	return conn.Exec(ctx, sql, arguments...)
 }
