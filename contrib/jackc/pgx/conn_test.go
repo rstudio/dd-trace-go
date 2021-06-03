@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v4"
 	"github.com/stretchr/testify/assert"
@@ -178,5 +179,26 @@ func TestConnCopyFrom(t *testing.T) {
 	assert.Len(t, tr.FinishedSpans(), 3)
 	span2 := tr.FinishedSpans()[2]
 	assert.Equal(t, "pgx.query", span2.OperationName())
-	assert.Equal(t, span2.Tags()["sql.query_type"], queryTypeCopyFrom)
+	assert.Equal(t, string(queryTypeCopyFrom), span2.Tags()["sql.query_type"])
+}
+
+func TestConnQueryRow(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tr := mocktracer.Start()
+	defer tr.Stop()
+
+	conn, err := Connect(ctx, testDB)
+	assert.Nil(t, err)
+	assert.NotNil(t, conn)
+
+	now := time.Time{}
+	err = conn.QueryRow(ctx, "SELECT NOW() AS now").Scan(&now)
+	assert.Nil(t, err)
+
+	assert.Len(t, tr.FinishedSpans(), 1)
+	span0 := tr.FinishedSpans()[0]
+	assert.Equal(t, "pgx.query", span0.OperationName())
+	assert.Equal(t, string(queryTypeQuery), span0.Tags()["sql.query_type"])
 }

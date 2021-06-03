@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
@@ -15,6 +16,7 @@ import (
 // TODO: remove this if/when *pgxtrace.Conn can be set on pgx.Tx
 type Tx struct {
 	conn   *Conn
+	cfg    *config
 	closed bool
 }
 
@@ -83,18 +85,28 @@ func (tx *Tx) Exec(ctx context.Context, sql string, arguments ...interface{}) (p
 }
 
 func (tx *Tx) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
-	// TODO: implement tx.Query
-	return nil, nil
+	start := time.Now()
+
+	if tx.closed {
+		err := pgx.ErrTxClosed
+		traceQuery(tx.cfg, ctx, queryTypeQuery, sql, start, err)
+		return &closedErrRows{err: err}, err
+	}
+
+	return tx.conn.Query(ctx, sql, args...)
 }
 
 func (tx *Tx) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
-	// TODO: implement tx.QueryRow
-	return nil
+	rows, _ := tx.Query(ctx, sql, args...)
+	return (pgx.Row)(rows.(pgx.Row))
 }
 
 func (tx *Tx) QueryFunc(ctx context.Context, sql string, args []interface{}, scans []interface{}, f func(pgx.QueryFuncRow) error) (pgconn.CommandTag, error) {
-	// TODO: implement tx.QueryFunc
-	return nil, nil
+	if tx.closed {
+		return nil, pgx.ErrTxClosed
+	}
+
+	return tx.conn.QueryFunc(ctx, sql, args, scans, f)
 }
 
 func (tx *Tx) Conn() *pgx.Conn {

@@ -76,7 +76,7 @@ type Conn struct {
 // - [-] Prepare
 // - [x] Query
 // - [x] QueryFunc
-// - [ ] QueryRow
+// - [x] QueryRow
 // - [ ] SendBatch
 // - [-] StatementCache
 // - [-] WaitForNotification
@@ -91,7 +91,7 @@ func (conn *Conn) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx,
 		return nil, err
 	}
 
-	return &Tx{conn: conn}, nil
+	return &Tx{conn: conn, cfg: conn.cfg}, nil
 }
 
 func (conn *Conn) BeginFunc(ctx context.Context, f func(pgx.Tx) error) error {
@@ -156,31 +156,22 @@ func (conn *Conn) Query(ctx context.Context, sql string, args ...interface{}) (p
 	return rows, err
 }
 
-// QueryFunc is a full copy of pgx.Conn.QueryFunc given that it is
-// calling Query and struct embedding doesn't work like that.
-// TODO: remove this if/when possible
 func (conn *Conn) QueryFunc(ctx context.Context, sql string, args []interface{}, scans []interface{}, f func(pgx.QueryFuncRow) error) (pgconn.CommandTag, error) {
-	rows, err := conn.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, err
+	start := time.Now()
+	ct, err := conn.Conn.QueryFunc(ctx, sql, args, scans, f)
+	traceQuery(conn.cfg, ctx, queryTypeQuery, sql, start, err)
+	return ct, err
+}
+
+func (conn *Conn) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+	start := time.Now()
+	row := conn.Conn.QueryRow(ctx, sql, args...)
+
+	return &Row{
+		start: start,
+		ctx:   ctx,
+		row:   row,
+		sql:   sql,
+		cfg:   conn.cfg,
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		err = rows.Scan(scans...)
-		if err != nil {
-			return nil, err
-		}
-
-		err = f(rows)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return rows.CommandTag(), nil
 }
