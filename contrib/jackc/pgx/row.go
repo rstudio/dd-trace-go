@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgproto3/v2"
 	"github.com/jackc/pgx/v4"
+	"gopkg.in/DataDog/dd-trace-go.v1/contrib/jackc/pgx/tracing"
 )
 
 // Row is a complete implementation of pgx.Row
@@ -16,12 +17,23 @@ type Row struct {
 	row    pgx.Row
 	ctx    context.Context
 	sql    string
-	cfg    *config
+	cfg    *tracing.Config
 }
 
 func (row *Row) Scan(dest ...interface{}) error {
 	err := row.row.Scan(dest...)
-	traceQuery(row.cfg, row.ctx, queryTypeQuery, row.sql, row.start, row.finish, err)
+
+	tracing.TraceQuery(row.ctx, tracing.TraceQueryParams{
+		ServiceName:   row.cfg.ServiceName,
+		AnalyticsRate: row.cfg.AnalyticsRate,
+		Meta:          row.cfg.Meta,
+		QueryType:     tracing.QueryTypeQuery,
+		Query:         row.sql,
+		StartTime:     row.start,
+		FinishTime:    row.finish,
+		Err:           err,
+	})
+
 	return err
 }
 

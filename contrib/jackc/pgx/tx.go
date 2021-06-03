@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 
+	"gopkg.in/DataDog/dd-trace-go.v1/contrib/jackc/pgx/tracing"
 	"gopkg.in/DataDog/dd-trace-go.v1/internal/log"
 )
 
@@ -20,7 +21,7 @@ import (
 type Tx struct {
 	conn         *Conn
 	err          error
-	cfg          *config
+	cfg          *tracing.Config
 	savepointNum int64
 	closed       bool
 }
@@ -140,7 +141,17 @@ func (tx *Tx) Query(ctx context.Context, sql string, args ...interface{}) (pgx.R
 
 	if tx.closed {
 		err := pgx.ErrTxClosed
-		traceQuery(tx.cfg, ctx, queryTypeQuery, sql, start, time.Time{}, err)
+
+		tracing.TraceQuery(ctx, tracing.TraceQueryParams{
+			ServiceName:   tx.cfg.ServiceName,
+			AnalyticsRate: tx.cfg.AnalyticsRate,
+			Meta:          tx.cfg.Meta,
+			QueryType:     tracing.QueryTypeQuery,
+			Query:         sql,
+			StartTime:     start,
+			Err:           err,
+		})
+
 		return &closedErrRows{err: err}, err
 	}
 

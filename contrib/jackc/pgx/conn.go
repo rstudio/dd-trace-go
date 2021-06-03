@@ -9,45 +9,30 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
+
+	"gopkg.in/DataDog/dd-trace-go.v1/contrib/jackc/pgx/tracing"
 )
 
-type queryType string
-
-const (
-	queryTypeQuery      queryType = "Query"
-	queryTypeBegin                = "Begin"
-	queryTypeClose                = "Close"
-	queryTypeCommit               = "Commit"
-	queryTypeCopyFrom             = "CopyFrom"
-	queryTypeDeallocate           = "Deallocate"
-	queryTypeExec                 = "Exec"
-	queryTypePing                 = "Ping"
-	queryTypePrepare              = "Prepare"
-	queryTypeSendBatch            = "SendBatch"
-
-	opName = "pgx.query"
-)
-
-func Connect(ctx context.Context, connString string, opts ...Option) (*Conn, error) {
+func Connect(ctx context.Context, connString string, opts ...tracing.Option) (*Conn, error) {
 	pgxConn, err := pgx.Connect(ctx, connString)
 	if err != nil {
 		return nil, err
 	}
 
-	cfg := &config{}
-	resolveOptions(cfg, opts...)
+	cfg := &tracing.Config{}
+	tracing.ResolveOptions(cfg, opts...)
 
 	return &Conn{Conn: pgxConn, cfg: cfg}, nil
 }
 
-func ConnectConfig(ctx context.Context, connConfig *pgx.ConnConfig, opts ...Option) (*Conn, error) {
+func ConnectConfig(ctx context.Context, connConfig *pgx.ConnConfig, opts ...tracing.Option) (*Conn, error) {
 	pgxConn, err := pgx.ConnectConfig(ctx, connConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	cfg := &config{}
-	resolveOptions(cfg, opts...)
+	cfg := &tracing.Config{}
+	tracing.ResolveOptions(cfg, opts...)
 
 	return &Conn{Conn: pgxConn, cfg: cfg}, nil
 }
@@ -55,7 +40,7 @@ func ConnectConfig(ctx context.Context, connConfig *pgx.ConnConfig, opts ...Opti
 type Conn struct {
 	*pgx.Conn
 
-	cfg *config
+	cfg *tracing.Config
 }
 
 func (conn *Conn) die(err error) {
@@ -110,7 +95,17 @@ func (conn *Conn) BeginTxFunc(ctx context.Context, txOptions pgx.TxOptions, f fu
 func (conn *Conn) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
 	start := time.Now()
 	n, err := conn.Conn.CopyFrom(ctx, tableName, columnNames, rowSrc)
-	traceQuery(conn.cfg, ctx, queryTypeCopyFrom, fmt.Sprintf("COPY %s FROM stdin", tableName.Sanitize()), start, time.Time{}, err)
+
+	tracing.TraceQuery(ctx, tracing.TraceQueryParams{
+		ServiceName:   conn.cfg.ServiceName,
+		AnalyticsRate: conn.cfg.AnalyticsRate,
+		Meta:          conn.cfg.Meta,
+		QueryType:     tracing.QueryTypeCopyFrom,
+		Query:         fmt.Sprintf("COPY %s FROM stdin", tableName.Sanitize()),
+		StartTime:     start,
+		Err:           err,
+	})
+
 	return n, err
 }
 
@@ -118,15 +113,24 @@ func (conn *Conn) Exec(ctx context.Context, sql string, arguments ...interface{}
 	start := time.Now()
 	commandTag, err := conn.Conn.Exec(ctx, sql, arguments...)
 
-	var qtype queryType = queryTypeExec
+	var qtype tracing.QueryType = tracing.QueryTypeExec
 	if strings.HasPrefix(sql, "begin") {
-		qtype = queryTypeBegin
+		qtype = tracing.QueryTypeBegin
 	} else if sql == "commit" {
-		qtype = queryTypeCommit
+		qtype = tracing.QueryTypeCommit
 	} else if sql == ";" {
-		qtype = queryTypePing
+		qtype = tracing.QueryTypePing
 	}
-	traceQuery(conn.cfg, ctx, qtype, sql, start, time.Time{}, err)
+
+	tracing.TraceQuery(ctx, tracing.TraceQueryParams{
+		ServiceName:   conn.cfg.ServiceName,
+		AnalyticsRate: conn.cfg.AnalyticsRate,
+		Meta:          conn.cfg.Meta,
+		QueryType:     qtype,
+		Query:         sql,
+		StartTime:     start,
+		Err:           err,
+	})
 
 	return commandTag, err
 }
@@ -139,14 +143,34 @@ func (conn *Conn) Ping(ctx context.Context) error {
 func (conn *Conn) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
 	start := time.Now()
 	rows, err := conn.Conn.Query(ctx, sql, args...)
-	traceQuery(conn.cfg, ctx, queryTypeQuery, sql, start, time.Time{}, err)
+
+	tracing.TraceQuery(ctx, tracing.TraceQueryParams{
+		ServiceName:   conn.cfg.ServiceName,
+		AnalyticsRate: conn.cfg.AnalyticsRate,
+		Meta:          conn.cfg.Meta,
+		QueryType:     tracing.QueryTypeQuery,
+		Query:         sql,
+		StartTime:     start,
+		Err:           err,
+	})
+
 	return rows, err
 }
 
 func (conn *Conn) QueryFunc(ctx context.Context, sql string, args []interface{}, scans []interface{}, f func(pgx.QueryFuncRow) error) (pgconn.CommandTag, error) {
 	start := time.Now()
 	ct, err := conn.Conn.QueryFunc(ctx, sql, args, scans, f)
-	traceQuery(conn.cfg, ctx, queryTypeQuery, sql, start, time.Time{}, err)
+
+	tracing.TraceQuery(ctx, tracing.TraceQueryParams{
+		ServiceName:   conn.cfg.ServiceName,
+		AnalyticsRate: conn.cfg.AnalyticsRate,
+		Meta:          conn.cfg.Meta,
+		QueryType:     tracing.QueryTypeQuery,
+		Query:         sql,
+		StartTime:     start,
+		Err:           err,
+	})
+
 	return ct, err
 }
 
