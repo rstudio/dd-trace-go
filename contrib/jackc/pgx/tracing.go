@@ -20,7 +20,7 @@ func ContextWithSpanTags(ctx context.Context, tags map[string]string) context.Co
 	return context.WithValue(ctx, spanTagsKey, tags)
 }
 
-func traceQuery(cfg *config, ctx context.Context, qtype queryType, query string, startTime time.Time, err error) {
+func traceQuery(cfg *config, ctx context.Context, qtype queryType, query string, startTime, finishTime time.Time, err error) {
 	opts := []ddtrace.StartSpanOption{
 		tracer.ServiceName(cfg.serviceName),
 		tracer.SpanType(ext.SpanTypeSQL),
@@ -47,5 +47,13 @@ func traceQuery(cfg *config, ctx context.Context, qtype queryType, query string,
 			span.SetTag(k, v)
 		}
 	}
-	span.Finish(tracer.WithError(err))
+
+	finishOpts := []tracer.FinishOption{
+		tracer.WithError(err),
+	}
+	if !finishTime.IsZero() {
+		finishOpts = append(finishOpts, tracer.FinishTime(finishTime))
+	}
+
+	span.Finish(finishOpts...)
 }

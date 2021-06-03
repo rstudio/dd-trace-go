@@ -11,16 +11,17 @@ import (
 
 // Row is a complete implementation of pgx.Row
 type Row struct {
-	start time.Time
-	row   pgx.Row
-	ctx   context.Context
-	sql   string
-	cfg   *config
+	start  time.Time
+	finish time.Time
+	row    pgx.Row
+	ctx    context.Context
+	sql    string
+	cfg    *config
 }
 
 func (row *Row) Scan(dest ...interface{}) error {
 	err := row.row.Scan(dest...)
-	traceQuery(row.cfg, row.ctx, queryTypeQuery, row.sql, row.start, err)
+	traceQuery(row.cfg, row.ctx, queryTypeQuery, row.sql, row.start, row.finish, err)
 	return err
 }
 

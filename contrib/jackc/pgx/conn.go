@@ -29,7 +29,7 @@ const (
 )
 
 func Connect(ctx context.Context, connString string, opts ...Option) (*Conn, error) {
-	pgxConnn, err := pgx.Connect(ctx, connString)
+	pgxConn, err := pgx.Connect(ctx, connString)
 	if err != nil {
 		return nil, err
 	}
@@ -37,11 +37,11 @@ func Connect(ctx context.Context, connString string, opts ...Option) (*Conn, err
 	cfg := &config{}
 	resolveOptions(cfg, opts...)
 
-	return &Conn{Conn: pgxConnn, cfg: cfg}, nil
+	return &Conn{Conn: pgxConn, cfg: cfg}, nil
 }
 
 func ConnectConfig(ctx context.Context, connConfig *pgx.ConnConfig, opts ...Option) (*Conn, error) {
-	pgxConnn, err := pgx.ConnectConfig(ctx, connConfig)
+	pgxConn, err := pgx.ConnectConfig(ctx, connConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +49,7 @@ func ConnectConfig(ctx context.Context, connConfig *pgx.ConnConfig, opts ...Opti
 	cfg := &config{}
 	resolveOptions(cfg, opts...)
 
-	return &Conn{Conn: pgxConnn, cfg: cfg}, nil
+	return &Conn{Conn: pgxConn, cfg: cfg}, nil
 }
 
 type Conn struct {
@@ -58,28 +58,15 @@ type Conn struct {
 	cfg *config
 }
 
-// TODO: all methods on *pgx.Conn, where 'x' means it has been
-// implemented and '-' means no override is needed:
-// - [x] Begin
-// - [x] BeginTx
-// - [x] BeginFunc
-// - [x] BeginTxFunc
-// - [-] Close
-// - [-] Config
-// - [-] ConnInfo
-// - [x] CopyFrom
-// - [-] Deallocate
-// - [x] Exec
-// - [-] IsClosed
-// - [-] PgConn
-// - [x] Ping
-// - [-] Prepare
-// - [x] Query
-// - [x] QueryFunc
-// - [x] QueryRow
-// - [ ] SendBatch
-// - [-] StatementCache
-// - [-] WaitForNotification
+func (conn *Conn) die(err error) {
+	if conn.IsClosed() {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	conn.PgConn().Close(ctx)
+}
 
 func (conn *Conn) Begin(ctx context.Context) (pgx.Tx, error) {
 	return conn.BeginTx(ctx, pgx.TxOptions{})
@@ -123,7 +110,7 @@ func (conn *Conn) BeginTxFunc(ctx context.Context, txOptions pgx.TxOptions, f fu
 func (conn *Conn) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
 	start := time.Now()
 	n, err := conn.Conn.CopyFrom(ctx, tableName, columnNames, rowSrc)
-	traceQuery(conn.cfg, ctx, queryTypeCopyFrom, fmt.Sprintf("COPY %s FROM stdin", tableName.Sanitize()), start, err)
+	traceQuery(conn.cfg, ctx, queryTypeCopyFrom, fmt.Sprintf("COPY %s FROM stdin", tableName.Sanitize()), start, time.Time{}, err)
 	return n, err
 }
 
@@ -139,7 +126,7 @@ func (conn *Conn) Exec(ctx context.Context, sql string, arguments ...interface{}
 	} else if sql == ";" {
 		qtype = queryTypePing
 	}
-	traceQuery(conn.cfg, ctx, qtype, sql, start, err)
+	traceQuery(conn.cfg, ctx, qtype, sql, start, time.Time{}, err)
 
 	return commandTag, err
 }
@@ -152,26 +139,43 @@ func (conn *Conn) Ping(ctx context.Context) error {
 func (conn *Conn) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
 	start := time.Now()
 	rows, err := conn.Conn.Query(ctx, sql, args...)
-	traceQuery(conn.cfg, ctx, queryTypeQuery, sql, start, err)
+	traceQuery(conn.cfg, ctx, queryTypeQuery, sql, start, time.Time{}, err)
 	return rows, err
 }
 
 func (conn *Conn) QueryFunc(ctx context.Context, sql string, args []interface{}, scans []interface{}, f func(pgx.QueryFuncRow) error) (pgconn.CommandTag, error) {
 	start := time.Now()
 	ct, err := conn.Conn.QueryFunc(ctx, sql, args, scans, f)
-	traceQuery(conn.cfg, ctx, queryTypeQuery, sql, start, err)
+	traceQuery(conn.cfg, ctx, queryTypeQuery, sql, start, time.Time{}, err)
 	return ct, err
 }
 
 func (conn *Conn) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
 	start := time.Now()
 	row := conn.Conn.QueryRow(ctx, sql, args...)
+	finish := time.Now()
 
 	return &Row{
-		start: start,
-		ctx:   ctx,
-		row:   row,
-		sql:   sql,
-		cfg:   conn.cfg,
+		start:  start,
+		finish: finish,
+		row:    row,
+		ctx:    ctx,
+		sql:    sql,
+		cfg:    conn.cfg,
+	}
+}
+
+func (conn *Conn) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults {
+	start := time.Now()
+	br := conn.Conn.SendBatch(ctx, b)
+	finish := time.Now()
+
+	return &BatchResults{
+		start:        start,
+		finish:       finish,
+		ctx:          ctx,
+		cfg:          conn.cfg,
+		batchLen:     b.Len(),
+		batchResults: br,
 	}
 }
