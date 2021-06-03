@@ -5,7 +5,11 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/DataDog/dd-trace-go.v1/contrib/jackc/pgx/tracing"
+	"gopkg.in/DataDog/dd-trace-go.v1/ddtrace/mocktracer"
 )
 
 var (
@@ -24,30 +28,28 @@ func TestConnect(t *testing.T) {
 	assert.NotNil(t, pool)
 }
 
-/***
- * TODO
 func TestConnectConfig(t *testing.T) {
-	connConfig, err := pgxpool.ParseConfig(testDB)
+	config, err := pgxpool.ParseConfig(testDB)
 	assert.Nil(t, err)
-	assert.NotNil(t, connConfig)
+	assert.NotNil(t, config)
 
-	pool, err := ConnectConfig(context.Background(), connConfig)
+	pool, err := ConnectConfig(context.Background(), config)
 	assert.Nil(t, err)
 	assert.NotNil(t, pool)
 }
 
-func TestConnBegin(t *testing.T) {
+func TestPoolBegin(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	tr := mocktracer.Start()
 	defer tr.Stop()
 
-	conn, err := Connect(ctx, testDB)
+	pool, err := Connect(ctx, testDB)
 	assert.Nil(t, err)
-	assert.NotNil(t, conn)
+	assert.NotNil(t, pool)
 
-	tx, err := conn.Begin(ctx)
+	tx, err := pool.Begin(ctx)
 	assert.Nil(t, err)
 	assert.NotNil(t, tx)
 
@@ -66,18 +68,18 @@ func TestConnBegin(t *testing.T) {
 	assert.Equal(t, span1.Tags()["sql.query_type"], tracing.QueryTypeExec)
 }
 
-func TestConnBeginFunc(t *testing.T) {
+func TestPoolBeginFunc(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	tr := mocktracer.Start()
 	defer tr.Stop()
 
-	conn, err := Connect(ctx, testDB)
+	pool, err := Connect(ctx, testDB)
 	assert.Nil(t, err)
-	assert.NotNil(t, conn)
+	assert.NotNil(t, pool)
 
-	err = conn.BeginFunc(ctx, func(tx pgx.Tx) error {
+	err = pool.BeginFunc(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SELECT NOW()"); err != nil {
 			return err
 		}
@@ -90,19 +92,23 @@ func TestConnBeginFunc(t *testing.T) {
 	})
 	assert.Nil(t, err)
 
-	assert.Len(t, tr.FinishedSpans(), 4)
-
 	expectedQueryTypes := []string{
-		string(tracing.QueryTypeBegin),
+		// TODO: figure out if wrapping begin/commit is worth it?
+		// string(tracing.QueryTypeBegin),
 		string(tracing.QueryTypeExec),
 		string(tracing.QueryTypeExec),
-		string(tracing.QueryTypeCommit),
+		// string(tracing.QueryTypeCommit),
 	}
+
+	assert.Len(t, tr.FinishedSpans(), len(expectedQueryTypes))
+
 	for i, span := range tr.FinishedSpans() {
 		assert.Equal(t, expectedQueryTypes[i], span.Tags()["sql.query_type"])
 	}
 }
 
+/***
+ * TODO
 func TestConnExec(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
